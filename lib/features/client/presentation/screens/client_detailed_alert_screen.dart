@@ -1,19 +1,24 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/network/services/alert_api_service.dart';
+import '../../../../core/services/location_service.dart';
 import '../../../../core/theme/app_colors.dart';
 
 /// Type d'incident pour le formulaire "Signaler un incident".
 enum IncidentTypeOption { intrusion, degradation, other }
 
 /// Écran "Signaler un incident" : site concerné, type (Intrusion/Dégradation/Autre),
-/// description rapide, photo, bouton ENVOYER L'ALERTE + popup succès.
+/// description rapide, photo, bouton ENVOYER L'ALERTE → POST /api/alerts/trigger.
 class ClientDetailedAlertScreen extends StatefulWidget {
+  /// ID du site (optionnel, pour contexte).
+  final String? siteId;
   /// Nom du site (ex. depuis la page détail site). Sinon valeur par défaut.
   final String? siteName;
 
   const ClientDetailedAlertScreen({
     super.key,
+    this.siteId,
     this.siteName,
   });
 
@@ -57,8 +62,31 @@ class _ClientDetailedAlertScreenState extends State<ClientDetailedAlertScreen> {
     );
   }
 
-  void _submitAndShowSuccess() {
-    // TODO: envoi API avec type, _descriptionController.text, photo
+  Future<void> _submitAndShowSuccess() async {
+    try {
+      final position = await getCurrentPositionOptional();
+      final type = _selectedType == IncidentTypeOption.intrusion
+          ? 'intrusion'
+          : _selectedType == IncidentTypeOption.degradation
+              ? 'degradation'
+              : 'client';
+      await AlertApiService.triggerAlert(
+        type: type,
+        source: 'client',
+        priorite: 'HAUTE',
+        latitude: position?.latitude,
+        longitude: position?.longitude,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e is Exception ? e.toString().replaceFirst('Exception: ', '') : 'Erreur envoi alerte'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
     if (!mounted) return;
     showDialog<void>(
       context: context,

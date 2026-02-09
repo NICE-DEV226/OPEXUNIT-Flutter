@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/offline/offline_alert_service.dart';
+import '../../../../core/services/location_service.dart';
 import '../../../../core/theme/app_colors.dart';
 
 class AgentAlertScreen extends StatefulWidget {
-  const AgentAlertScreen({super.key});
+  const AgentAlertScreen({super.key, this.patrolId, this.interventionId});
+
+  /// Si ouvert depuis une patrouille en cours, l'alerte sera liée à cette patrouille.
+  final String? patrolId;
+  final String? interventionId;
 
   @override
   State<AgentAlertScreen> createState() => _AgentAlertScreenState();
@@ -20,11 +26,49 @@ class _AgentAlertScreenState extends State<AgentAlertScreen> {
   ];
 
   late String _selectedType;
+  final _observationController = TextEditingController();
+  bool _sending = false;
 
   @override
   void initState() {
     super.initState();
     _selectedType = _incidentTypes.first;
+  }
+
+  @override
+  void dispose() {
+    _observationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendAlert() async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final position = await getCurrentPositionOptional();
+      await OfflineAlertService.triggerAlert(
+        type: 'panique',
+        source: _selectedType,
+        priorite: 'HIGH',
+        latitude: position?.latitude,
+        longitude: position?.longitude,
+        relatedPatrolId: widget.patrolId,
+        relatedInterventionId: widget.interventionId,
+      );
+      if (!mounted) return;
+      setState(() => _sending = false);
+      _showAlertSuccessDialog(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _sending = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e is Exception ? e.toString().replaceFirst('Exception: ', '') : '$e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -128,6 +172,7 @@ class _AgentAlertScreenState extends State<AgentAlertScreen> {
                 ],
               ),
               child: TextField(
+                controller: _observationController,
                 maxLines: null,
                 minLines: 5,
                 decoration: InputDecoration(
@@ -192,7 +237,7 @@ class _AgentAlertScreenState extends State<AgentAlertScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => _showAlertSuccessDialog(context),
+                onPressed: _sending ? null : _sendAlert,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryRed,
                   foregroundColor: Colors.white,
@@ -205,7 +250,16 @@ class _AgentAlertScreenState extends State<AgentAlertScreen> {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                child: Text(AppStrings.sendAlert),
+                child: _sending
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(AppStrings.sendAlert),
               ),
             ),
           ],
@@ -295,73 +349,46 @@ class _AlertItem extends StatelessWidget {
 }
 
 void _showAlertSuccessDialog(BuildContext context) {
-  showGeneralDialog<void>(
+  final navigator = Navigator.of(context);
+  showDialog<void>(
     context: context,
-    barrierDismissible: true,
-    barrierLabel: 'alert-success',
-    barrierColor: Colors.black.withOpacity(0.45),
-    transitionDuration: const Duration(milliseconds: 220),
-    pageBuilder: (_, __, ___) => const SizedBox.shrink(),
-    transitionBuilder: (dialogContext, animation, ___, ____) {
-      final curved = CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutBack,
-        reverseCurve: Curves.easeInBack,
-      );
-      Future.delayed(const Duration(milliseconds: 1400), () {
-        final navigator = Navigator.of(dialogContext);
-        if (navigator.canPop()) {
-          navigator.pop();
-        }
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (context.mounted) {
-            Navigator.of(context).pop();
-          }
-        });
-      });
-      return FadeTransition(
-        opacity: animation,
-        child: Center(
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.9, end: 1.0).animate(curved),
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                width: MediaQuery.of(dialogContext).size.width * 0.78,
-                padding: const EdgeInsets.fromLTRB(20, 28, 20, 28),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircleAvatar(
-                      radius: 32,
-                      backgroundColor: Color(0xFF22C55E),
-                      child: Icon(
-                        Icons.check,
-                        color: Colors.white,
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      AppStrings.alertSentSuccess,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black87,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+    barrierDismissible: false,
+    builder: (dialogContext) => AlertDialog(
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircleAvatar(
+            radius: 32,
+            backgroundColor: Color(0xFF22C55E),
+            child: Icon(Icons.check, color: Colors.white, size: 32),
           ),
+          const SizedBox(height: 18),
+          Text(
+            AppStrings.alertSentSuccess,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Colors.black87,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppStrings.alertSentConfirmationMessage,
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            navigator.pop();
+          },
+          child: Text(MaterialLocalizations.of(dialogContext).okButtonLabel),
         ),
-      );
-    },
+      ],
+    ),
   );
 }

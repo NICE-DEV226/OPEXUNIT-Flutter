@@ -3,8 +3,13 @@ import 'package:flutter/material.dart';
 import '../../../../core/app_locale.dart';
 import '../../../../core/app_strings.dart';
 import '../../../../core/auth/session_storage.dart';
+import '../../../../core/network/api_config.dart';
+import '../../../../core/services/gps_tracking_service.dart';
+import '../../../../core/network/services/auth_api_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../auth/data/models/user_model.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import 'agent_edit_profile_screen.dart';
 import 'agent_settings_screen.dart';
 
 class AgentProfileScreen extends StatefulWidget {
@@ -19,13 +24,13 @@ class AgentProfileScreen extends StatefulWidget {
 }
 
 class _AgentProfileScreenState extends State<AgentProfileScreen> {
-  String _displayName = 'DOGO JOHN';
   bool _modeOffline = false;
 
-  String get _idLabel => 'ID: OPX-8821-JD';
+  UserModel? get _user => SessionStorage.getUser();
 
   @override
   Widget build(BuildContext context) {
+    final user = _user;
     return ValueListenableBuilder<Locale>(
       valueListenable: appLocaleNotifier,
       builder: (_, locale, __) {
@@ -83,18 +88,7 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                   child: Stack(
                     alignment: Alignment.bottomRight,
                     children: [
-                      CircleAvatar(
-                        radius: 52,
-                        backgroundColor: const Color(0xFFE5E7EB),
-                        child: Text(
-                          _displayName.isNotEmpty ? _displayName.substring(0, 1).toUpperCase() : '?',
-                          style: const TextStyle(
-                            fontSize: 36,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF4B5563),
-                          ),
-                        ),
-                      ),
+                      _buildPhotoAvatar(user),
                       Container(
                         width: 20,
                         height: 20,
@@ -108,47 +102,62 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                GestureDetector(
-                  onTap: _showEditNameDialog,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        _displayName,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black87,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(Icons.edit_rounded, size: 20, color: AppColors.primaryRed),
-                    ],
+                Text(
+                  user?.fullName ?? '—',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                    letterSpacing: 0.5,
                   ),
+                  textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryRed,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    AppStrings.securityAgentGrade2,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                if (user != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryRed,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      _roleLabel(user.role),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _idLabel,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF6B7280),
+                  if (user.matricule != null && user.matricule!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'ID: ${user.matricule}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  _UserInfoCard(user: user),
+                ],
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final updated = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => const AgentEditProfileScreen(),
+                      ),
+                    );
+                    if (updated == true && mounted) setState(() {});
+                  },
+                  icon: const Icon(Icons.edit_rounded, size: 20),
+                  label: Text(AppStrings.editProfile),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primaryRed,
+                    side: const BorderSide(color: AppColors.primaryRed),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
                   ),
                 ),
                 const SizedBox(height: 28),
@@ -186,6 +195,10 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     onPressed: () async {
+                      GpsTrackingService.stop();
+                      try {
+                        await AuthApiService.logout();
+                      } catch (_) {}
                       await SessionStorage.clear();
                       if (!context.mounted) return;
                       Navigator.of(context).pushAndRemoveUntil(
@@ -213,41 +226,56 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
     );
   }
 
-  void _showEditNameDialog() {
-    final controller = TextEditingController(text: _displayName);
-    showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text(AppStrings.editName),
-          content: TextField(
-            controller: controller,
-            decoration: InputDecoration(
-              labelText: AppStrings.name,
-              border: const OutlineInputBorder(),
+  Widget _buildPhotoAvatar(UserModel? user) {
+    final photoUrl = user?.photoProfil != null && user!.photoProfil!.isNotEmpty
+        ? ApiConfig.uploadsUrl(user.photoProfil)
+        : null;
+    final name = user?.fullName ?? '';
+    final initial = name.isNotEmpty ? name.substring(0, 1).toUpperCase() : '?';
+    return CircleAvatar(
+      radius: 52,
+      backgroundColor: const Color(0xFFE5E7EB),
+      child: photoUrl != null && photoUrl.isNotEmpty
+          ? ClipOval(
+              child: Image.network(
+                photoUrl,
+                width: 104,
+                height: 104,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Text(
+                  initial,
+                  style: const TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF4B5563),
+                  ),
+                ),
+              ),
+            )
+          : Text(
+              initial,
+              style: const TextStyle(
+                fontSize: 36,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF4B5563),
+              ),
             ),
-            autofocus: true,
-            textCapitalization: TextCapitalization.characters,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: Text(AppStrings.cancel),
-            ),
-            TextButton(
-              onPressed: () {
-                final name = controller.text.trim();
-                if (name.isNotEmpty) {
-                  setState(() => _displayName = name);
-                }
-                Navigator.pop(ctx);
-              },
-              child: Text(AppStrings.save),
-            ),
-          ],
-        );
-      },
     );
+  }
+
+  static String _roleLabel(String role) {
+    switch (role.toUpperCase()) {
+      case 'ADMIN':
+        return 'Administrateur';
+      case 'SUPERVISEUR':
+        return 'Superviseur';
+      case 'AGENT':
+        return 'Agent de sécurité';
+      case 'CLIENT':
+        return 'Client';
+      default:
+        return role;
+    }
   }
 
   void _showPhotoOptions() {
@@ -329,6 +357,109 @@ class _AgentProfileScreenState extends State<AgentProfileScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _UserInfoCard extends StatelessWidget {
+  final UserModel user;
+
+  const _UserInfoCard({required this.user});
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    if (user.email.isNotEmpty) {
+      rows.add(_InfoRow(icon: Icons.email_outlined, label: 'Email', value: user.email));
+    }
+    if (user.telephone.isNotEmpty) {
+      rows.add(_InfoRow(icon: Icons.phone_outlined, label: 'Téléphone', value: user.telephone));
+    }
+    if (user.ville != null && user.ville!.isNotEmpty) {
+      rows.add(_InfoRow(icon: Icons.location_city_outlined, label: 'Ville', value: user.ville!));
+    }
+    if (user.siteAffecte != null && user.siteAffecte!.isNotEmpty) {
+      rows.add(_InfoRow(icon: Icons.place_outlined, label: 'Site', value: user.siteAffecte!));
+    }
+    if (user.zoneAffectee != null && user.zoneAffectee!.isNotEmpty) {
+      rows.add(_InfoRow(icon: Icons.map_outlined, label: 'Zone', value: user.zoneAffectee!));
+    }
+    if (rows.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Informations',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF6B7280),
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...rows,
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _InfoRow({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: const Color(0xFF6B7280)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF9CA3AF),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

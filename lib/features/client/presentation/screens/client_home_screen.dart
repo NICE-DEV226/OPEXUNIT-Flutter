@@ -3,14 +3,20 @@ import 'package:flutter/material.dart';
 import 'package:shake/shake.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/auth/session_storage.dart';
+import '../../../../core/network/services/alert_api_service.dart';
+import '../../../../core/offline/offline_client_service.dart';
+import '../../../../core/services/location_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../agent/data/models/site_model.dart';
 import '../widgets/client_bottom_nav_bar.dart';
 import 'client_contact_security_screen.dart';
 import 'client_detailed_alert_screen.dart';
 import 'client_journal_screen.dart';
 import 'client_notifications_screen.dart';
+import 'client_site_detail_screen.dart';
 
-/// Dashboard client : état du site, agents en service, dernier incident, SOS, actions.
+/// Dashboard client : sites du client, agents en service, SOS (alerte API), actions.
 class ClientHomeScreen extends StatefulWidget {
   const ClientHomeScreen({super.key});
 
@@ -19,14 +25,16 @@ class ClientHomeScreen extends StatefulWidget {
 }
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> {
-  /// Nom affiché (sera remplacé par les données utilisateur / API).
-  static String get _displayName => 'M. Dupont';
+  List<SiteModel> _sites = [];
+  bool _sitesLoading = true;
+  String? _sitesError;
 
   ShakeDetector? _shakeDetector;
 
   @override
   void initState() {
     super.initState();
+    _loadSites();
     if (!kIsWeb) {
       try {
         _shakeDetector = ShakeDetector.autoStart(
@@ -50,8 +58,41 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     super.dispose();
   }
 
+  Future<void> _loadSites() async {
+    final user = SessionStorage.getUser();
+    if (user == null) {
+      setState(() {
+        _sitesLoading = false;
+        _sites = [];
+      });
+      return;
+    }
+    setState(() {
+      _sitesLoading = true;
+      _sitesError = null;
+    });
+    try {
+      final list = await OfflineClientService.getClientSites(user.id);
+      if (mounted) {
+        setState(() {
+          _sites = list;
+          _sitesLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _sitesLoading = false;
+          _sitesError = e is Exception ? e.toString().replaceFirst('Exception: ', '') : '$e';
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final user = SessionStorage.getUser();
+    final displayName = user?.fullName ?? 'Client';
     final now = DateTime.now();
     final timeStr = _formatTime(now);
     final dateStr = _formatDate(now);
@@ -72,7 +113,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          AppStrings.helloClient(_displayName),
+                          AppStrings.helloClient(displayName),
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
@@ -123,25 +164,77 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
             ),
 
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                child: Column(
+              child: RefreshIndicator(
+                onRefresh: _loadSites,
+                color: AppColors.primaryRed,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // État du site
+                    // Mes sites (sites du client)
+                    _SectionTitle(title: AppStrings.mySites),
+                    const SizedBox(height: 8),
+                    if (_sitesLoading)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(child: CircularProgressIndicator(color: AppColors.primaryRed)),
+                      )
+                    else if (_sitesError != null)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          _sitesError!,
+                          style: const TextStyle(fontSize: 13, color: Colors.red),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    else if (_sites.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          AppStrings.noSitesForClient,
+                          style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280)),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    else
+                      ..._sites.map(
+                        (site) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _SiteTile(
+                            site: site,
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ClientSiteDetailScreen(
+                                    siteId: site.id,
+                                    siteName: site.name,
+                                    siteLocation: site.description ?? (site.hasLocation ? '${site.latitude!.toStringAsFixed(4)}, ${site.longitude!.toStringAsFixed(4)}' : ''),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+
+                    const SizedBox(height: 20),
+
+                    // État / Agents (synthèse)
                     _SectionTitle(title: AppStrings.siteStatus),
                     const SizedBox(height: 8),
                     _StatusCard(
-                      status: AppStrings.secure,
-                      isSecure: true,
+                      status: _sites.isEmpty ? AppStrings.noSitesForClient : AppStrings.secure,
+                      isSecure: _sites.isNotEmpty,
                     ),
 
                     const SizedBox(height: 20),
 
-                    // Agents en service
                     _SectionTitle(title: AppStrings.agentsOnDuty),
                     const SizedBox(height: 8),
-                    _AgentsCard(count: 4),
+                    _AgentsCard(count: 0),
 
                     const SizedBox(height: 20),
 
@@ -227,6 +320,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
                   ],
                 ),
               ),
+            ),
             ),
 
             // Barre de navigation
@@ -328,8 +422,27 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
-  void _sendSosSimpleAndOpenScreen(BuildContext context) {
-    // TODO: envoi API alerte simple (GPS, timestamp)
+  Future<void> _sendSosSimpleAndOpenScreen(BuildContext context) async {
+    try {
+      final position = await getCurrentPositionOptional();
+      await AlertApiService.triggerAlert(
+        type: 'panique',
+        source: 'client',
+        priorite: 'HAUTE',
+        latitude: position?.latitude,
+        longitude: position?.longitude,
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e is Exception ? e.toString().replaceFirst('Exception: ', '') : 'Erreur envoi alerte'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    if (!context.mounted) return;
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -357,6 +470,75 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
     );
   }
 
+}
+
+class _SiteTile extends StatelessWidget {
+  final SiteModel site;
+  final VoidCallback? onTap;
+
+  const _SiteTile({required this.site, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryRed.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.location_on_rounded, color: AppColors.primaryRed, size: 26),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      site.name,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    if (site.description != null && site.description!.isNotEmpty)
+                      Text(
+                        site.description!,
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _SectionTitle extends StatelessWidget {

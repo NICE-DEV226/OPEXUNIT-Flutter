@@ -84,6 +84,7 @@ class AppStrings {
   static String get checkins => _s('Check-ins', 'Check-ins');
   static String get validatedLocations => _s('Locations validées', 'Validated locations');
   static String get patrols => _s('Patrouilles', 'Patrols');
+  static String get noPatrols => _s('Aucune patrouille', 'No patrols');
   static String get movementLogs => _s('Logs de mouvement', 'Movement logs');
   static String get syncDisclaimer => _s('Les éléments non cochés resteront stockés localement sur votre appareil jusqu\'à la prochaine synchronisation.', 'Unchecked items will remain stored locally until next sync.');
   static String get lastSyncToday => _s('Dernière synchro : Aujourd\'hui à 08:45', 'Last sync: Today at 08:45');
@@ -105,6 +106,10 @@ class AppStrings {
   static String get positionPhotoRecorded => _s('Votre position et votre photo sont enregistrées dans le rapport de service OPEXUNIT', 'Your position and photo are recorded in the OPEXUNIT service report');
   static String get validate => _s('Valider', 'Validate');
   static String get checkinRecorded => _s('Check-in enregistré', 'Check-in recorded');
+  static String get notesOptional => _s('Notes (optionnel)', 'Notes (optional)');
+  static String get checkinTypeLabel => _s('Type de check-in', 'Check-in type');
+  static String get gpsWaiting => _s('Récupération de la position…', 'Getting position…');
+  static String get gpsError => _s('Position indisponible', 'Position unavailable');
   static String get photoRequiredStub => _s('Photo de service : prise de photo à brancher (caméra)', 'Service photo: camera to be connected');
   static String get geolocationStub => _s('Géolocalisation : position à brancher (GPS)', 'Geolocation: GPS to be connected');
 
@@ -124,11 +129,17 @@ class AppStrings {
   static String get patrolAssigned => _s('Patrouille assignée', 'Patrol assigned');
   static String get onePatrolAtATime => _s('Vous disposez d\'une seule patrouille à la fois', 'You have one patrol at a time');
   static String get patrolStartTitle => _s('Démarrage de patrouille', 'Patrol start');
-  static String get mapPatrolInProgress => _s('Carte patrouille en cours (mock)', 'Patrol map in progress (mock)');
+  static String get mapPatrolInProgress => _s('Carte patrouille en cours', 'Patrol map in progress');
+  static String get mapPatrol => _s('Carte patrouille', 'Patrol map');
   static String get mapPatrolMock => _s('Carte patrouille (mock)', 'Patrol map (mock)');
   static String get missionInProgress => _s('Mission en cours', 'Mission in progress');
   static String get surveillanceSite4 => _s('Surveillance Site 4', 'Site 4 surveillance');
   static String get distance => _s('Distance', 'Distance');
+  static String get navigateToSite => _s('Naviguer vers le site', 'Navigate to site');
+  static String get navigationInstructions => _s('Instructions', 'Instructions');
+  static String get tapToListen => _s('Appuyer pour écouter', 'Tap to listen');
+  static String get positionUnavailable => _s('Position introuvable. Activez le GPS et réessayez.', 'Position unavailable. Enable GPS and try again.');
+  static String get routeUnavailable => _s('Itinéraire introuvable.', 'Route unavailable.');
   static String get time => _s('Temps', 'Time');
   static String get alertGivenPleaseCheck => _s('Une alerte a été donnée. Veuillez constater les faits', 'An alert was raised. Please check the facts');
   static String get confirmTerminatePatrol => _s('Voulez-vous vraiment terminer la patrouille ?', 'Do you really want to end the patrol?');
@@ -143,6 +154,11 @@ class AppStrings {
   static String get locationLabel => _s('Lieu', 'Location');
   static String get patrolCompletedTitle => _s('Patrouille complétée', 'Patrol completed');
   static String get intervention => _s('Intervention', 'Intervention');
+  static String get interventions => _s('Interventions', 'Interventions');
+  static String get startIntervention => _s('Démarrer l\'intervention', 'Start intervention');
+  static String get interventionDetail => _s('Détail intervention', 'Intervention detail');
+  static String get noInterventions => _s('Aucune intervention', 'No interventions');
+  static String get interventionAssigned => _s('Intervention assignée', 'Intervention assigned');
   static String get checkinStartTitle => _s('Check-in début', 'Check-in start');
   static String get siteA => _s('Site A', 'Site A');
   static String get routinePatrolNoIncident => _s('Ronde habituelle, aucun incident.', 'Routine patrol, no incident.');
@@ -152,6 +168,13 @@ class AppStrings {
   static String get thursday12Jan2022 => _s('Jeudi 12 janvier 2022', 'Thursday 12 January 2022');
   static String get signalRecorded => _s('Signalement enregistré', 'Report recorded');
   static String get reportSavedTitle => _s('Rapport enregistré', 'Report saved');
+  static String get closeIntervention => _s('Clôturer l\'intervention', 'Close intervention');
+  static String get closeInterventionSubtitle => _s('Remplissez le rapport pour clôturer', 'Fill in the report to close');
+  static String get reportResume => _s('Résumé', 'Summary');
+  static String get reportActions => _s('Actions effectuées', 'Actions taken');
+  static String get reportDegats => _s('Dégâts / constats', 'Damage / findings');
+  static String get tempsReaction => _s('Temps de réaction (min)', 'Reaction time (min)');
+  static String get anomaliesList => _s('Anomalies constatées', 'Anomalies observed');
 
   // Éléments associés (détail historique)
   static String get associatedItems => _s('Éléments associés', 'Associated items');
@@ -184,6 +207,7 @@ class AppStrings {
 
   // Auth / Login
   static String get agentLogin => _s('Connexion Agent', 'Agent login');
+  static String get sessionExpired => _s('Session expirée. Veuillez vous reconnecter.', 'Session expired. Please log in again.');
   static String get clientSpace => _s('Espace clients', 'Client space');
   static String get welcomeAgent => _s('Bienvenue\n\nVeuillez vous identifier pour accéder au portail opérationnel.', 'Welcome\n\nPlease identify yourself to access the operational portal.');
   static String get welcomeClient => _s('Connectez-vous pour accéder à votre tableau de bord.', 'Log in to access your dashboard.');
@@ -200,6 +224,10 @@ class AppStrings {
   static String get onlineOffline => _s('En Ligne / Hors Ligne', 'Online / Offline');
   static String get systemOperational => _s('Système Opérationnel', 'System operational');
   static String get enterEmailOrPhone => _s('Veuillez entrer votre e-mail ou numéro de téléphone', 'Please enter your email or phone number');
+  static String get loginRequiresInternet => _s('Connexion internet requise pour vous connecter.', 'Internet connection required to sign in.');
+  static String get loginOfflineHint => _s('Une connexion est nécessaire pour vous identifier. Une fois connecté, les patrouilles et interventions déjà chargées restent accessibles hors ligne.', 'Connection is required to sign in. Once signed in, patrol and intervention data already loaded remain available offline.');
+  static String get continueOffline => _s('Reprendre la session (hors ligne)', 'Continue offline');
+  static String get continueOfflineDesc => _s('Vous avez déjà une session enregistrée. Continuez sans connexion pour accéder aux données en cache (patrouilles, interventions).', 'You have a saved session. Continue without connection to access cached data (patrols, interventions).');
   static String get reportToAdmin => _s('Signaler à l\'admin', 'Report to admin');
   static String get credentialsFromWebAdmin => _s('Vos identifiants vous sont fournis par l\'administration (portail web).', 'Your login credentials are provided by the web admin.');
   static String get credentialsFromAdminOnCreation => _s('Vos identifiants de connexion sont fournis par l\'administrateur lors de la création de votre compte sur le portail web admin.', 'Your login credentials are provided by the administrator when your account is created on the web admin portal.');
@@ -253,6 +281,7 @@ class AppStrings {
   static String yesterdayAt(String time) => _s('Hier $time', 'Yesterday $time');
   static String get siteSecureSummary => _s('Ronde de soirée effectuée. Site sécurisé.', 'Evening round completed. Site secure.');
   static String get mySites => _s('Mes Sites', 'My Sites');
+  static String get noSitesForClient => _s('Aucun site assigné à votre compte', 'No sites assigned to your account');
   static String get searchSitePlaceholder => _s('Rechercher un site...', 'Search a site...');
   static String get securedLabel => _s('Sécurisés', 'Secured');
   static String get alertsLabel => _s('Alertes', 'Alerts');
@@ -321,6 +350,8 @@ class AppStrings {
   static String get language => _s('Langue', 'Language');
   static String get logout => _s('Déconnexion', 'Logout');
   static String get save => _s('Enregistrer', 'Save');
+  static String get editProfile => _s('Modifier le profil', 'Edit profile');
+  static String get editProfileTitle => _s('Modifier votre photo et vos informations', 'Edit your photo and information');
   static String get cancel => _s('Annuler', 'Cancel');
   static String get editName => _s('Modifier le nom', 'Edit name');
   static String get name => _s('Nom', 'Name');

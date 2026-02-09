@@ -1,10 +1,96 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/auth/session_storage.dart';
+import '../../../../core/network/services/report_api_service.dart';
+import '../../../../core/offline/connectivity_service.dart';
+import '../../../../core/offline/offline_patrol_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../controllers/patrol_controller.dart';
 
-class AgentPatrolFinishScreen extends StatelessWidget {
-  const AgentPatrolFinishScreen({super.key});
+class AgentPatrolFinishScreen extends StatefulWidget {
+  const AgentPatrolFinishScreen({super.key, this.patrolId});
+
+  final String? patrolId;
+
+  @override
+  State<AgentPatrolFinishScreen> createState() => _AgentPatrolFinishScreenState();
+}
+
+class _AgentPatrolFinishScreenState extends State<AgentPatrolFinishScreen> {
+  final _observationController = TextEditingController();
+  final _resumeController = TextEditingController();
+  final _actionsController = TextEditingController();
+  final _degatsController = TextEditingController();
+  final _anomaliesController = TextEditingController();
+  final _tempsReactionController = TextEditingController();
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _observationController.dispose();
+    _resumeController.dispose();
+    _actionsController.dispose();
+    _degatsController.dispose();
+    _anomaliesController.dispose();
+    _tempsReactionController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _endPatrolAndFinish(BuildContext context) async {
+    final patrolId = widget.patrolId;
+    final observations = _observationController.text.trim();
+    final resume = _resumeController.text.trim();
+    final actions = _actionsController.text.trim();
+    final degats = _degatsController.text.trim();
+    final anomaliesStr = _anomaliesController.text.trim();
+    final anomalies = anomaliesStr.isEmpty
+        ? null
+        : anomaliesStr.split(RegExp(r'[\n,;]')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    final tempsReaction = int.tryParse(_tempsReactionController.text.trim());
+
+    setState(() => _isSubmitting = true);
+    try {
+      if (patrolId != null && patrolId.isNotEmpty) {
+        final online = await ConnectivityService.checkOnline();
+        final agentId = SessionStorage.getUser()?.id;
+        if (online) {
+          await ReportApiService.createPatrolReport(
+            patrolId: patrolId,
+            agentId: agentId,
+            observations: observations.isEmpty ? null : observations,
+            anomalies: anomalies,
+            resume: resume.isEmpty ? null : resume,
+            degats: degats.isEmpty ? null : degats,
+            tempsReaction: tempsReaction,
+            actions: actions.isEmpty ? null : actions,
+          );
+        }
+        await OfflinePatrolService.endPatrol(
+          patrolId,
+          reportObservations: observations.isEmpty ? null : observations,
+          reportAnomalies: anomalies,
+          reportResume: resume.isEmpty ? null : resume,
+          reportDegats: degats.isEmpty ? null : degats,
+          reportTempsReaction: tempsReaction,
+          reportActions: actions.isEmpty ? null : actions,
+        );
+        PatrolController.instance.loadMyPatrol();
+      }
+      if (!context.mounted) return;
+      _showFinishSuccessDialog(context);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e is Exception ? e.toString().replaceFirst('Exception: ', '') : 'Erreur'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +144,7 @@ class AgentPatrolFinishScreen extends StatelessWidget {
                 border: Border.all(color: const Color(0xFFCBD5E1)),
               ),
               child: TextField(
+                controller: _observationController,
                 maxLines: null,
                 minLines: 6,
                 decoration: InputDecoration(
@@ -76,6 +163,22 @@ class AgentPatrolFinishScreen extends StatelessWidget {
                 ),
               ),
             ),
+
+            const SizedBox(height: 16),
+            _buildLabel(AppStrings.reportResume),
+            _buildTextField(_resumeController, '', minLines: 2),
+            const SizedBox(height: 16),
+            _buildLabel(AppStrings.reportActions),
+            _buildTextField(_actionsController, '', minLines: 2),
+            const SizedBox(height: 16),
+            _buildLabel(AppStrings.reportDegats),
+            _buildTextField(_degatsController, '', minLines: 2),
+            const SizedBox(height: 16),
+            _buildLabel(AppStrings.anomaliesList),
+            _buildTextField(_anomaliesController, 'Séparer par virgule ou retour à la ligne', minLines: 2),
+            const SizedBox(height: 16),
+            _buildLabel(AppStrings.tempsReaction),
+            _buildTextField(_tempsReactionController, 'Ex: 15', minLines: 1, keyboardType: TextInputType.number),
 
             const SizedBox(height: 20),
 
@@ -112,7 +215,7 @@ class AgentPatrolFinishScreen extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => _showFinishSuccessDialog(context),
+                onPressed: _isSubmitting ? null : () => _endPatrolAndFinish(context),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryRed,
                   foregroundColor: Colors.white,
@@ -130,6 +233,46 @@ class AgentPatrolFinishScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildLabel(String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111827)),
+      ),
+    );
+  }
+
+  Widget _buildTextField(
+    TextEditingController controller,
+    String hint, {
+    int minLines = 1,
+    TextInputType? keyboardType,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFCBD5E1)),
+      ),
+      child: TextField(
+        controller: controller,
+        maxLines: null,
+        minLines: minLines,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+          border: InputBorder.none,
+          contentPadding: EdgeInsets.zero,
+          isDense: true,
+        ),
+        style: const TextStyle(fontSize: 13, color: Color(0xFF111827)),
       ),
     );
   }

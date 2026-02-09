@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
 import '../../../../core/auth/session_storage.dart';
+import '../../../../core/network/api_config.dart';
+import '../../../../core/services/gps_tracking_service.dart';
+import '../../../../core/network/services/auth_api_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../widgets/client_bottom_nav_bar.dart';
@@ -106,37 +109,64 @@ class ClientProfileScreen extends StatelessWidget {
   }
 
   Widget _buildProfileHeader(BuildContext context) {
+    final user = SessionStorage.getUser();
+    final name = user?.fullName ?? AppStrings.defaultClientName;
+    var initial = name.split(' ').map((e) => e.isNotEmpty ? e[0] : '').take(2).join().toUpperCase();
+    if (initial.isEmpty && name.isNotEmpty) initial = name.substring(0, 1).toUpperCase();
+    final photoUrl = user?.photoProfil != null && user!.photoProfil!.isNotEmpty
+        ? ApiConfig.uploadsUrl(user.photoProfil)
+        : null;
+
     return Column(
       children: [
         CircleAvatar(
           radius: 48,
           backgroundColor: const Color(0xFFFFE4E1),
-          child: Text(
-            AppStrings.defaultClientName.split(' ').map((e) => e.isNotEmpty ? e[0] : '').take(2).join().toUpperCase(),
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w700,
-              color: AppColors.primaryRed,
-            ),
-          ),
+          child: photoUrl != null && photoUrl.isNotEmpty
+              ? ClipOval(
+                  child: Image.network(
+                    photoUrl,
+                    width: 96,
+                    height: 96,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Text(
+                      initial,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryRed,
+                      ),
+                    ),
+                  ),
+                )
+              : Text(
+                  initial,
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primaryRed,
+                  ),
+                ),
         ),
         const SizedBox(height: 14),
         Text(
-          AppStrings.defaultClientName,
+          name,
           style: const TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w700,
             color: Color(0xFF111827),
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          AppStrings.defaultCompanyName,
-          style: const TextStyle(
-            fontSize: 14,
-            color: Color(0xFF6B7280),
+        if (user?.email != null && user!.email.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            user.email,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color(0xFF6B7280),
+            ),
           ),
-        ),
+        ],
         const SizedBox(height: 8),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -175,6 +205,10 @@ class ClientProfileScreen extends StatelessWidget {
   }
 
   void _logout(BuildContext context) async {
+    GpsTrackingService.stop();
+    try {
+      await AuthApiService.logout();
+    } catch (_) {}
     await SessionStorage.clear();
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(

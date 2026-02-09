@@ -1,15 +1,24 @@
 import 'package:flutter/material.dart';
 import '../../../../core/app_strings.dart';
 import '../../../../core/auth/session_storage.dart';
+import '../../../../core/network/api_config.dart';
+import '../../../../core/network/services/auth_api_service.dart';
+import '../../../../core/services/gps_tracking_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+// ignore: unused_import — extension PatrolStatusExt.label utilisée via patrol.statut.label
+import '../../data/models/patrol_model.dart';
+import '../controllers/agent_dashboard_controller.dart';
 import '../widgets/agent_bottom_nav_bar.dart';
 import 'agent_alert_screen.dart';
 import 'agent_checkin_screen.dart';
 import 'agent_history_screen.dart';
 import 'agent_message_screen.dart';
 import 'agent_notifications_screen.dart';
-import 'agent_patrol_map_screen.dart';
+import 'agent_intervention_list_screen.dart';
+import 'agent_patrol_in_progress_screen.dart';
+import 'agent_patrol_list_screen.dart';
+import 'agent_patrol_start_screen.dart';
 import 'agent_settings_screen.dart';
 import 'agent_sync_screen.dart';
 
@@ -127,6 +136,10 @@ class AgentHomeScreen extends StatelessWidget {
                 ),
                 onTap: () async {
                   Navigator.of(context).pop(); // ferme le drawer
+                  GpsTrackingService.stop();
+                  try {
+                    await AuthApiService.logout();
+                  } catch (_) {}
                   await SessionStorage.clear();
                   if (!context.mounted) return;
                   Navigator.of(context).pushAndRemoveUntil(
@@ -144,7 +157,10 @@ class AgentHomeScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const _ResumeGpsTracking(),
             const _AgentHeaderCard(),
+            const SizedBox(height: 24),
+            const _DashboardSection(),
             const SizedBox(height: 24),
             Center(
               child: Text(
@@ -189,13 +205,49 @@ class AgentHomeScreen extends StatelessWidget {
                 Expanded(
                   child: _ActionCard(
                     icon: Icons.directions_walk_rounded,
-                    title: AppStrings.patrol,
-                    subtitle: AppStrings.scanQrNfc,
+                    title: AppStrings.patrols,
+                    subtitle: 'Assignées, en cours, terminées',
                     color: const Color(0xFFEF4444),
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => const AgentPatrolMapScreen(),
+                          builder: (_) => const AgentPatrolListScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _ActionCard(
+                    icon: Icons.emergency_rounded,
+                    title: AppStrings.interventions,
+                    subtitle: 'Assignées, en cours',
+                    color: const Color(0xFFF59E0B),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const AgentInterventionListScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _ActionCard(
+                    icon: Icons.history_rounded,
+                    title: AppStrings.history,
+                    subtitle: AppStrings.recentActivities,
+                    color: const Color(0xFF8B5CF6),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => AgentHomeScreen._historyBuilder(),
                         ),
                       );
                     },
@@ -281,11 +333,51 @@ class AgentHomeScreen extends StatelessWidget {
   }
 }
 
+/// Widget invisible qui reprend le suivi GPS au chargement de l'accueil agent (si check-in prise de poste actif).
+class _ResumeGpsTracking extends StatefulWidget {
+  const _ResumeGpsTracking();
+
+  @override
+  State<_ResumeGpsTracking> createState() => _ResumeGpsTrackingState();
+}
+
+class _ResumeGpsTrackingState extends State<_ResumeGpsTracking> {
+  @override
+  void initState() {
+    super.initState();
+    GpsTrackingService.maybeResume();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
 class _AgentHeaderCard extends StatelessWidget {
   const _AgentHeaderCard();
 
+  static String _initials(String? fullName) {
+    if (fullName == null || fullName.isEmpty) return '?';
+    final parts = fullName.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return '${parts[0].isNotEmpty ? parts[0][0] : ''}${parts[1].isNotEmpty ? parts[1][0] : ''}'.toUpperCase();
+    }
+    return parts.isNotEmpty && parts[0].isNotEmpty ? parts[0][0].toUpperCase() : '?';
+  }
+
+  /// URL complète pour la photo de profil (chemin relatif → baseUrl + path).
+  static String _photoUrlOf(dynamic user) {
+    if (user == null) return '';
+    final path = user.photoProfil as String?;
+    return ApiConfig.uploadsUrl(path);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final user = SessionStorage.getUser();
+    final displayName = user?.fullName ?? 'Agent';
+    final matricule = user?.matricule ?? '';
+    final initials = _initials(user?.fullName);
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -301,33 +393,38 @@ class _AgentHeaderCard extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
-          const CircleAvatar(
+          CircleAvatar(
             radius: 26,
-            backgroundColor: Color(0xFFE5E7EB),
-            child: Text(
-              'DJ',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF4B5563),
-              ),
-            ),
+            backgroundColor: const Color(0xFFE5E7EB),
+            backgroundImage: _photoUrlOf(user).isNotEmpty
+                ? NetworkImage(_photoUrlOf(user))
+                : null,
+            child: _photoUrlOf(user).isEmpty
+                ? Text(
+                    initials,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF4B5563),
+                    ),
+                  )
+                : null,
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
+              children: [
                 Text(
-                  'DOGO JOHN',
-                  style: TextStyle(
+                  displayName,
+                  style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
-                  'ID: OPX-8854',
-                  style: TextStyle(
+                  matricule.isNotEmpty ? 'ID: $matricule' : 'Agent',
+                  style: const TextStyle(
                     fontSize: 12,
                     color: Color(0xFF6B7280),
                   ),
@@ -362,6 +459,334 @@ class _AgentHeaderCard extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Section unique : patrouille + intervention, alimentée par GET user/me (dashboard).
+class _DashboardSection extends StatefulWidget {
+  const _DashboardSection();
+
+  @override
+  State<_DashboardSection> createState() => _DashboardSectionState();
+}
+
+class _DashboardSectionState extends State<_DashboardSection> {
+  final AgentDashboardController _dashboardController =
+      AgentDashboardController.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _dashboardController.loadDashboard();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: _dashboardController,
+      builder: (context, _) {
+        final isLoading = _dashboardController.isLoading;
+        final patrol = _dashboardController.currentPatrol;
+        final hasPatrol = _dashboardController.hasPatrol;
+        final hasIntervention = _dashboardController.hasIntervention;
+        final errorMessage = _dashboardController.errorMessage;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (isLoading && patrol == null && !hasIntervention)
+              _buildLoadingCard()
+            else ...[
+              if (hasPatrol && patrol != null) _buildPatrolCard(context, patrol),
+              if (!hasPatrol)
+                _buildNoPatrolCard(errorMessage),
+            if (hasPatrol && patrol != null) const SizedBox(height: 12),
+            if (hasIntervention) ...[
+              _buildInterventionCard(context),
+              const SizedBox(height: 12),
+            ],
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildLoadingCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoPatrolCard(String? errorMessage) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryRed.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.directions_walk_rounded,
+                    color: AppColors.primaryRed),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                AppStrings.patrolAssigned,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppStrings.onePatrolAtATime,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF6B7280),
+            ),
+          ),
+          if (errorMessage != null && errorMessage.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              errorMessage,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.red.shade700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPatrolCard(BuildContext context, dynamic patrol) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: patrol.isOngoing
+                      ? const Color(0xFF22C55E).withOpacity(0.12)
+                      : AppColors.primaryRed.withOpacity(0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.directions_walk_rounded,
+                  color: patrol.isOngoing
+                      ? const Color(0xFF22C55E)
+                      : AppColors.primaryRed,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppStrings.patrolAssigned,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      (patrol.statut as PatrolStatus).label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: patrol.isOngoing
+                            ? const Color(0xFF22C55E)
+                            : const Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _dashboardController.isLoading
+                  ? null
+                  : () async {
+                      if (patrol.canStart) {
+                        final updated = await _dashboardController
+                            .startPatrol(patrol.id);
+                        if (context.mounted && updated != null) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => AgentPatrolStartScreen(
+                                  patrolId: patrol.id),
+                            ),
+                          );
+                        }
+                      } else if (patrol.isOngoing) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => AgentPatrolInProgressScreen(
+                                patrolId: patrol.id),
+                          ),
+                        );
+                      }
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: patrol.isOngoing
+                    ? const Color(0xFF22C55E)
+                    : AppColors.primaryRed,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              icon: const Icon(Icons.play_arrow_rounded, size: 20),
+              label: Text(
+                patrol.canStart
+                    ? AppStrings.startAction
+                    : AppStrings.continue_,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInterventionCard(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const AgentInterventionListScreen(),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Color(0xFFF59E0B).withOpacity(0.12),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: const Color(0xFFF59E0B),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Color(0xFFF59E0B).withOpacity(0.3),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.emergency_rounded,
+                  color: Color(0xFFF59E0B),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppStrings.intervention,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Vous avez une intervention assignée',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFF59E0B),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

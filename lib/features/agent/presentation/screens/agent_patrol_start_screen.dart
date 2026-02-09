@@ -1,11 +1,60 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/offline/offline_patrol_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../data/models/patrol_model.dart';
+import '../controllers/agent_dashboard_controller.dart';
 import 'agent_patrol_in_progress_screen.dart';
 
-class AgentPatrolStartScreen extends StatelessWidget {
-  const AgentPatrolStartScreen({super.key});
+class AgentPatrolStartScreen extends StatefulWidget {
+  const AgentPatrolStartScreen({super.key, this.patrolId});
+
+  final String? patrolId;
+
+  @override
+  State<AgentPatrolStartScreen> createState() => _AgentPatrolStartScreenState();
+}
+
+class _AgentPatrolStartScreenState extends State<AgentPatrolStartScreen> {
+  PatrolModel? _patrol;
+  bool _loading = true;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.patrolId != null && widget.patrolId!.isNotEmpty) {
+      _loadPatrolDetails();
+    } else {
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadPatrolDetails() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final p = await OfflinePatrolService.getDetails(widget.patrolId!);
+      if (mounted) {
+        setState(() {
+          _patrol = p;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadError = e is Exception ? e.toString().replaceFirst('Exception: ', '') : '$e';
+          _loading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +83,6 @@ class AgentPatrolStartScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             const SizedBox(height: 8),
-            // Cercle icône
             Container(
               width: 140,
               height: 140,
@@ -65,6 +113,30 @@ class AgentPatrolStartScreen extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
+
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(color: AppColors.primaryRed),
+              )
+            else if (_loadError != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: Text(
+                  _loadError!,
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            if (_patrol != null) _buildPatrolInfoSection(_patrol!),
 
             Align(
               alignment: Alignment.centerLeft,
@@ -109,13 +181,27 @@ class AgentPatrolStartScreen extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => const AgentPatrolInProgressScreen(),
-                    ),
-                  );
-                },
+                onPressed: _patrol == null
+                    ? null
+                    : () async {
+                        if (_patrol!.canStart) {
+                          final updated = await AgentDashboardController.instance.startPatrol(_patrol!.id);
+                          if (!mounted) return;
+                          if (updated != null) {
+                            Navigator.of(context).pushReplacement(
+                              MaterialPageRoute(
+                                builder: (_) => AgentPatrolInProgressScreen(patrolId: widget.patrolId),
+                              ),
+                            );
+                          }
+                        } else if (_patrol!.isOngoing) {
+                          Navigator.of(context).pushReplacement(
+                            MaterialPageRoute(
+                              builder: (_) => AgentPatrolInProgressScreen(patrolId: widget.patrolId),
+                            ),
+                          );
+                        }
+                      },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryRed,
                   foregroundColor: Colors.white,
@@ -128,11 +214,106 @@ class AgentPatrolStartScreen extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                child: Text(AppStrings.validate),
+                child: Text(
+                  _patrol != null && _patrol!.canStart
+                      ? AppStrings.startPatrol
+                      : AppStrings.validate,
+                ),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPatrolInfoSection(PatrolModel patrol) {
+    final typeLabel = patrol.type == 'mobile' ? 'Mobile' : 'Ronde';
+    final pointsCount = patrol.pointsControle.length;
+    final heureDebut = patrol.heureDebut != null
+        ? '${patrol.heureDebut!.hour.toString().padLeft(2, '0')}:${patrol.heureDebut!.minute.toString().padLeft(2, '0')}'
+        : null;
+    final heureFin = patrol.heureFin != null
+        ? '${patrol.heureFin!.hour.toString().padLeft(2, '0')}:${patrol.heureFin!.minute.toString().padLeft(2, '0')}'
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Informations patrouille',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF374151),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _InfoRow(label: 'Statut', value: patrol.statut.label),
+            _InfoRow(label: 'Type', value: typeLabel),
+            if (patrol.siteId != null && patrol.siteId!.isNotEmpty)
+              _InfoRow(label: 'Site', value: patrol.siteId!),
+            _InfoRow(label: 'Points de contrôle', value: '$pointsCount'),
+            if (heureDebut != null) _InfoRow(label: 'Heure début', value: heureDebut),
+            if (heureFin != null) _InfoRow(label: 'Heure fin', value: heureFin),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(
+              '$label :',
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B7280),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF111827),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -211,4 +392,3 @@ class _PatrolItem extends StatelessWidget {
     );
   }
 }
-

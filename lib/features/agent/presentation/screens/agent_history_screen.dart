@@ -1,8 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/auth/session_storage.dart';
+import '../../../../core/offline/offline_patrol_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../data/models/alert_model.dart';
+import '../../data/models/intervention_model.dart';
+import '../../data/models/patrol_model.dart';
 import '../widgets/agent_bottom_nav_bar.dart';
+import 'agent_intervention_detail_screen.dart';
+
+import '../../../../core/network/api_config.dart';
+import '../../../../core/network/services/alert_api_service.dart';
+import '../../../../core/network/services/intervention_api_service.dart';
+import '../../../../core/network/services/report_api_service.dart';
 
 /// Données d'un élément d'historique (liste + détail).
 class HistoryItemData {
@@ -17,6 +28,7 @@ class HistoryItemData {
   final String? observation;
   final bool hasPhoto;
   final bool hasLocation;
+  final DateTime? sortDate;
 
   HistoryItemData({
     required this.id,
@@ -30,52 +42,114 @@ class HistoryItemData {
     this.observation,
     this.hasPhoto = false,
     this.hasLocation = false,
+    this.sortDate,
   }) : statusLabel = statusLabel ?? AppStrings.statusOk;
 }
 
-enum HistoryType { patrol, checkin, intervention }
+enum HistoryType { patrol, checkin, intervention, alert }
 
-class AgentHistoryScreen extends StatelessWidget {
+String _formatDate(DateTime d) {
+  return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} · ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+}
+
+class AgentHistoryScreen extends StatefulWidget {
   const AgentHistoryScreen({super.key, this.historyScreenBuilder});
 
-  /// Fourni pour que la navbar (Accueil, Synchro, Historique, Profil) fonctionne depuis cet écran.
   final Widget Function()? historyScreenBuilder;
 
-  static List<HistoryItemData> get _items => [
-        HistoryItemData(
-          id: '1',
+  @override
+  State<AgentHistoryScreen> createState() => _AgentHistoryScreenState();
+}
+
+class _AgentHistoryScreenState extends State<AgentHistoryScreen> {
+  List<HistoryItemData> _items = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final user = SessionStorage.getUser();
+    if (user == null) {
+      if (mounted) setState(() { _items = []; _loading = false; });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final list = <HistoryItemData>[];
+
+    try {
+      // Patrouilles terminées (agent = moi)
+      final patrols = await OfflinePatrolService.getHistory(agentId: user.id);
+      for (final p in patrols) {
+        if (p.statut != PatrolStatus.completed) continue;
+        final start = p.heureDebut != null ? _formatDate(p.heureDebut!) : null;
+        final end = p.heureFin != null ? _formatDate(p.heureFin!) : null;
+        list.add(HistoryItemData(
+          id: p.id,
           type: HistoryType.patrol,
           title: AppStrings.patrolCompletedTitle,
-          site: AppStrings.siteA,
-          startDateTime: '${AppStrings.thursday12Jan2022} · 14:30',
-          endDateTime: '${AppStrings.thursday12Jan2022} · 15:45',
-          statusLabel: AppStrings.statusOk,
-          observation: AppStrings.routinePatrolNoIncident,
-          hasPhoto: true,
-          hasLocation: true,
-        ),
-        HistoryItemData(
-          id: '2',
-          type: HistoryType.checkin,
-          title: AppStrings.checkinStartTitle,
-          site: AppStrings.siteA,
-          dateTime: '${AppStrings.thursday12Jan2022} · 08:45',
-          statusLabel: AppStrings.statusOk,
-          observation: AppStrings.controlPointNorth,
-          hasPhoto: true,
-          hasLocation: true,
-        ),
-        HistoryItemData(
-          id: '3',
+          site: p.siteId ?? AppStrings.siteA,
+          startDateTime: start,
+          endDateTime: end,
+          statusLabel: p.statut.label,
+          sortDate: p.heureFin ?? p.heureDebut ?? p.createdAt,
+        ));
+      }
+
+      // Interventions où l'utilisateur est assigné (agents_envoyes)
+      final interventions = await InterventionApiService.getHistory();
+      for (final i in interventions) {
+        if (!i.agentIds.contains(user.id)) continue;
+        final dt = i.createdAt ?? i.heureDepart ?? i.heureArrivee;
+        list.add(HistoryItemData(
+          id: i.id,
           type: HistoryType.intervention,
-          title: AppStrings.intervention,
-          site: AppStrings.siteA,
-          dateTime: '${AppStrings.thursday12Jan2022} · 10:20',
-          statusLabel: AppStrings.statusOk,
-          observation: AppStrings.alarmCheckFalseAlert,
-          hasPhoto: true,
-        ),
-      ];
+          title: '${i.type.label} • ${i.statut.label}',
+          site: i.hasLocation ? '${i.latitude?.toStringAsFixed(4)}, ${i.longitude?.toStringAsFixed(4)}' : '—',
+          dateTime: dt != null ? _formatDate(dt) : null,
+          statusLabel: i.statut.label,
+          sortDate: dt,
+        ));
+      }
+
+      // Alertes (historique de l'utilisateur)
+      final alerts = await AlertApiService.getHistory();
+      for (final a in alerts) {
+        list.add(HistoryItemData(
+          id: a.id,
+          type: HistoryType.alert,
+          title: 'Alerte ${a.type.value}',
+          site: a.hasLocation ? '${a.latitude?.toStringAsFixed(4)}, ${a.longitude?.toStringAsFixed(4)}' : '—',
+          dateTime: a.createdAt != null ? _formatDate(a.createdAt!) : null,
+          statusLabel: a.statut.label,
+          observation: a.source,
+          hasLocation: a.hasLocation,
+          sortDate: a.createdAt,
+        ));
+      }
+
+      list.sort((a, b) {
+        final da = a.sortDate ?? DateTime(0);
+        final db = b.sortDate ?? DateTime(0);
+        return db.compareTo(da);
+      });
+
+      if (mounted) setState(() { _items = list; _loading = false; _error = null; });
+    } catch (e) {
+      if (mounted) setState(() {
+        _loading = false;
+        _error = e is Exception ? e.toString().replaceFirst('Exception: ', '') : '$e';
+        _items = [];
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -86,46 +160,89 @@ class AgentHistoryScreen extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: Colors.black87,
-          ),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black87),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
           AppStrings.history,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.black87,
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
         ),
       ),
-      body: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        itemCount: _items.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          final item = _items[index];
-            return _HistoryCard(
-            item: item,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => AgentHistoryDetailScreen(
-                    item: item,
-                    historyScreenBuilder: historyScreenBuilder,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.primaryRed))
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _error!,
+                          style: const TextStyle(color: Color(0xFF6B7280)),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        TextButton.icon(
+                          onPressed: _load,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Réessayer'),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+                )
+                  : _items.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Aucun historique (patrouilles terminées, interventions, alertes).',
+                        style: const TextStyle(fontSize: 15, color: Color(0xFF6B7280)),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      color: AppColors.primaryRed,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                        itemCount: _items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final item = _items[index];
+                          return _HistoryCard(
+                            item: item,
+                            onTap: () {
+                              if (item.type == HistoryType.intervention) {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => AgentInterventionDetailScreen(
+                                      interventionId: item.id,
+                                    ),
+                                  ),
+                                );
+                              } else {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => AgentHistoryDetailScreen(
+                                      item: item,
+                                      historyScreenBuilder: widget.historyScreenBuilder,
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
       bottomNavigationBar: AgentBottomNavBar(
         currentIndex: 2,
         isHistoryDetail: false,
-        historyScreenBuilder: historyScreenBuilder,
+        historyScreenBuilder: widget.historyScreenBuilder,
       ),
     );
   }
@@ -145,6 +262,8 @@ class _HistoryCard extends StatelessWidget {
         return Icons.qr_code_scanner_rounded;
       case HistoryType.intervention:
         return Icons.warning_amber_rounded;
+      case HistoryType.alert:
+        return Icons.notification_important_rounded;
     }
   }
 
@@ -156,6 +275,8 @@ class _HistoryCard extends StatelessWidget {
         return const Color(0xFF3B82F6);
       case HistoryType.intervention:
         return const Color(0xFFF97316);
+      case HistoryType.alert:
+        return const Color(0xFFDC2626);
     }
   }
 
@@ -268,7 +389,8 @@ class _HistoryCard extends StatelessWidget {
 }
 
 /// Écran de détail d'un élément d'historique.
-class AgentHistoryDetailScreen extends StatelessWidget {
+/// Pour une patrouille terminée, charge et affiche le rapport lié (GET /api/reports/patrol?patrol_id=...).
+class AgentHistoryDetailScreen extends StatefulWidget {
   final HistoryItemData item;
   final Widget Function()? historyScreenBuilder;
 
@@ -278,31 +400,74 @@ class AgentHistoryDetailScreen extends StatelessWidget {
     this.historyScreenBuilder,
   });
 
+  @override
+  State<AgentHistoryDetailScreen> createState() => _AgentHistoryDetailScreenState();
+}
+
+class _AgentHistoryDetailScreenState extends State<AgentHistoryDetailScreen> {
+  ReportModel? _linkedReport;
+  bool _reportLoading = false;
+  String? _reportError;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.item.type == HistoryType.patrol) _loadPatrolReport();
+  }
+
+  Future<void> _loadPatrolReport() async {
+    setState(() {
+      _reportLoading = true;
+      _reportError = null;
+    });
+    try {
+      final list = await ReportApiService.getPatrolReports(patrolId: widget.item.id);
+      if (mounted) {
+        setState(() {
+          _reportLoading = false;
+          _linkedReport = list.isNotEmpty ? list.first : null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _reportLoading = false;
+          _reportError = e is Exception ? e.toString().replaceFirst('Exception: ', '') : '$e';
+        });
+      }
+    }
+  }
+
   IconData _iconForType() {
-    switch (item.type) {
+    switch (widget.item.type) {
       case HistoryType.patrol:
         return Icons.directions_walk_rounded;
       case HistoryType.checkin:
         return Icons.qr_code_scanner_rounded;
       case HistoryType.intervention:
         return Icons.warning_amber_rounded;
+      case HistoryType.alert:
+        return Icons.notification_important_rounded;
     }
   }
 
   Color _iconColorForType() {
-    switch (item.type) {
+    switch (widget.item.type) {
       case HistoryType.patrol:
         return AppColors.primaryRed;
       case HistoryType.checkin:
         return const Color(0xFF3B82F6);
       case HistoryType.intervention:
         return const Color(0xFFF97316);
+      case HistoryType.alert:
+        return const Color(0xFFDC2626);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final iconColor = _iconColorForType();
+    final item = widget.item;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F7),
@@ -319,7 +484,7 @@ class AgentHistoryDetailScreen extends StatelessWidget {
         ),
         title: Text(
           AppStrings.detail,
-          style: TextStyle(
+          style: const TextStyle(
             color: Colors.black87,
             fontSize: 18,
             fontWeight: FontWeight.w600,
@@ -347,6 +512,11 @@ class AgentHistoryDetailScreen extends StatelessWidget {
             ] else if (item.dateTime != null) ...[
               const SizedBox(height: 12),
               _InfoRow(label: AppStrings.dateTime, value: item.dateTime!),
+            ],
+            // Pour patrouille terminée : bloc rapport lié (observations, anomalies, résumé, actions, photos)
+            if (item.type == HistoryType.patrol) ...[
+              const SizedBox(height: 20),
+              _buildLinkedReportSection(),
             ],
             if (item.observation != null && item.observation!.isNotEmpty) ...[
               const SizedBox(height: 20),
@@ -419,8 +589,220 @@ class AgentHistoryDetailScreen extends StatelessWidget {
       bottomNavigationBar: AgentBottomNavBar(
         currentIndex: 2,
         isHistoryDetail: true,
-        historyScreenBuilder: historyScreenBuilder,
+        historyScreenBuilder: widget.historyScreenBuilder,
       ),
+    );
+  }
+
+  Widget _buildLinkedReportSection() {
+    if (_reportLoading) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_reportError != null) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Text(
+          _reportError!,
+          style: const TextStyle(fontSize: 14, color: Color(0xFFDC2626)),
+        ),
+      );
+    }
+    final r = _linkedReport;
+    if (r == null) {
+      return const SizedBox.shrink();
+    }
+    final sectionStyle = const TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      color: Color(0xFF6B7280),
+      letterSpacing: 0.5,
+    );
+    final boxDecoration = BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.04),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    );
+    final children = <Widget>[
+      Text(
+        AppStrings.reportRecorded,
+        style: sectionStyle,
+      ),
+      const SizedBox(height: 8),
+    ];
+    if (r.observations != null && r.observations!.isNotEmpty) {
+      children.addAll([
+        Text(AppStrings.observation, style: sectionStyle),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: boxDecoration,
+          child: Text(
+            r.observations!,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF111827), height: 1.4),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ]);
+    }
+    if (r.anomalies.isNotEmpty) {
+      children.addAll([
+        Text(AppStrings.anomaliesList, style: sectionStyle),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: boxDecoration,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: r.anomalies.map((a) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('• $a', style: const TextStyle(fontSize: 14, color: Color(0xFF111827), height: 1.4)),
+            )).toList(),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ]);
+    }
+    if (r.resume != null && r.resume!.isNotEmpty) {
+      children.addAll([
+        Text(AppStrings.reportResume, style: sectionStyle),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: boxDecoration,
+          child: Text(
+            r.resume!,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF111827), height: 1.4),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ]);
+    }
+    if (r.actions != null && r.actions!.isNotEmpty) {
+      children.addAll([
+        Text(AppStrings.reportActions, style: sectionStyle),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: boxDecoration,
+          child: Text(
+            r.actions!,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF111827), height: 1.4),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ]);
+    }
+    if (r.tempsReaction != null) {
+      children.addAll([
+        Text(AppStrings.tempsReaction, style: sectionStyle),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: boxDecoration,
+          child: Text(
+            '${r.tempsReaction} min',
+            style: const TextStyle(fontSize: 14, color: Color(0xFF111827)),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ]);
+    }
+    if (r.degats != null && r.degats!.isNotEmpty) {
+      children.addAll([
+        Text(AppStrings.reportDegats, style: sectionStyle),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: boxDecoration,
+          child: Text(
+            r.degats!,
+            style: const TextStyle(fontSize: 14, color: Color(0xFF111827), height: 1.4),
+          ),
+        ),
+        const SizedBox(height: 14),
+      ]);
+    }
+    if (r.photos.isNotEmpty) {
+      children.addAll([
+        Text(AppStrings.photoDeService, style: sectionStyle),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 100,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: r.photos.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) {
+              final url = ApiConfig.uploadsUrl(r.photos[i]);
+              if (url.isEmpty) return const SizedBox.shrink();
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  url,
+                  width: 100,
+                  height: 100,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    width: 100,
+                    height: 100,
+                    color: const Color(0xFFE5E7EB),
+                    child: const Icon(Icons.broken_image_outlined),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ]);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
     );
   }
 }

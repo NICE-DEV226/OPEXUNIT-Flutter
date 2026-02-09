@@ -1,30 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/auth/session_storage.dart';
+import '../../../../core/network/services/site_api_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../agent/data/models/site_model.dart';
 import '../widgets/client_bottom_nav_bar.dart';
 import 'client_settings_screen.dart';
 import 'client_site_detail_screen.dart';
 
-/// Identifiant de site pour résolution des libellés (FR/EN).
-enum _SiteId { entrepotNord, entrepotSud, laboRD }
-
-/// Donnée mock pour une carte site.
-class _SiteItem {
-  final _SiteId id;
-  final bool hasIncident;
-  final int agentCount;
-  final bool reinforcementRequired;
-
-  const _SiteItem({
-    required this.id,
-    required this.hasIncident,
-    required this.agentCount,
-    this.reinforcementRequired = false,
-  });
-}
-
-/// Écran Statut client "Mes Sites" : synthèse sécurisés/alertes, liste des sites avec statut.
+/// Écran Statut client "Mes Sites" : liste des sites du client (GET /api/sites?client_id=).
 class ClientStatusScreen extends StatefulWidget {
   final ClientBottomNavBar bottomNavBar;
 
@@ -38,26 +23,47 @@ class ClientStatusScreen extends StatefulWidget {
 }
 
 class _ClientStatusScreenState extends State<ClientStatusScreen> {
-  static const String _userName = 'Marc';
   final _searchController = TextEditingController();
-  final _sites = const [
-    _SiteItem(
-      id: _SiteId.entrepotNord,
-      hasIncident: true,
-      agentCount: 1,
-      reinforcementRequired: true,
-    ),
-    _SiteItem(
-      id: _SiteId.entrepotSud,
-      hasIncident: false,
-      agentCount: 2,
-    ),
-    _SiteItem(
-      id: _SiteId.laboRD,
-      hasIncident: false,
-      agentCount: 5,
-    ),
-  ];
+  List<SiteModel> _sites = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSites();
+  }
+
+  Future<void> _loadSites() async {
+    final user = SessionStorage.getUser();
+    if (user == null) {
+      setState(() {
+        _loading = false;
+        _sites = [];
+      });
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final list = await SiteApiService.getAll(clientId: user.id);
+      if (mounted) {
+        setState(() {
+          _sites = list;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e is Exception ? e.toString().replaceFirst('Exception: ', '') : '$e';
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -67,8 +73,10 @@ class _ClientStatusScreenState extends State<ClientStatusScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const securedCount = 4;
-    const alertsCount = 1;
+    final user = SessionStorage.getUser();
+    final userName = user?.fullName ?? 'Client';
+    final securedCount = _sites.length;
+    final alertsCount = 0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F7),
@@ -76,36 +84,50 @@ class _ClientStatusScreenState extends State<ClientStatusScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildHeader(context),
+            _buildHeader(context, userName),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildSearchBar(),
-                    const SizedBox(height: 20),
-                    _buildSummaryCards(securedCount, alertsCount),
-                    const SizedBox(height: 24),
-                    ..._sites.map((s) => Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _SiteCard(
-                            item: s,
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => ClientSiteDetailScreen(
-                                    siteName: _siteName(s.id),
-                                    siteLocation: _siteLocation(s.id),
-                                  ),
-                                ),
-                              );
-                            },
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: AppColors.primaryRed))
+                  : _error != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              _error!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.red),
+                            ),
                           ),
-                        )),
-                  ],
-                ),
-              ),
+                        )
+                      : SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildSearchBar(),
+                              const SizedBox(height: 20),
+                              _buildSummaryCards(securedCount, alertsCount),
+                              const SizedBox(height: 24),
+                              ..._sites.map((site) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: _SiteCard(
+                                      site: site,
+                                      onTap: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) => ClientSiteDetailScreen(
+                                              siteId: site.id,
+                                              siteName: site.name,
+                                              siteLocation: site.description ?? (site.hasLocation ? '${site.latitude!.toStringAsFixed(4)}, ${site.longitude!.toStringAsFixed(4)}' : ''),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  )),
+                            ],
+                          ),
+                        ),
             ),
             widget.bottomNavBar,
           ],
@@ -114,7 +136,7 @@ class _ClientStatusScreenState extends State<ClientStatusScreen> {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, String userName) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 12, 20),
       child: Row(
@@ -124,7 +146,7 @@ class _ClientStatusScreenState extends State<ClientStatusScreen> {
             radius: 26,
             backgroundColor: AppColors.primaryRed.withValues(alpha: 0.15),
             child: Text(
-              _userName.isNotEmpty ? _userName[0].toUpperCase() : '?',
+              userName.isNotEmpty ? userName[0].toUpperCase() : '?',
               style: const TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
@@ -138,7 +160,7 @@ class _ClientStatusScreenState extends State<ClientStatusScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  AppStrings.helloClient(_userName),
+                  AppStrings.helloClient(userName),
                   style: const TextStyle(
                     fontSize: 15,
                     color: Color(0xFF6B7280),
@@ -269,47 +291,18 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-String _siteName(_SiteId id) {
-  switch (id) {
-    case _SiteId.entrepotNord:
-      return AppStrings.entrepotNord;
-    case _SiteId.entrepotSud:
-      return AppStrings.entrepotSud;
-    case _SiteId.laboRD:
-      return AppStrings.laboRD;
-  }
-}
-
-String _siteLocation(_SiteId id) {
-  switch (id) {
-    case _SiteId.entrepotNord:
-      return AppStrings.zoneIndustrielleA;
-    case _SiteId.entrepotSud:
-      return AppStrings.zoneLogistiqueSud;
-    case _SiteId.laboRD:
-      return AppStrings.campusTech;
-  }
-}
-
 class _SiteCard extends StatelessWidget {
-  final _SiteItem item;
+  final SiteModel site;
   final VoidCallback onTap;
 
-  const _SiteCard({required this.item, required this.onTap});
+  const _SiteCard({required this.site, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final hasIncident = item.hasIncident;
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border(
-          left: BorderSide(
-            color: hasIncident ? AppColors.primaryRed : Colors.transparent,
-            width: 4,
-          ),
-        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.06),
@@ -329,33 +322,18 @@ class _SiteCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Icon(
+                  Icons.check_circle_rounded,
+                  size: 20,
+                  color: const Color(0xFF16A34A),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Icon(
-                            hasIncident ? Icons.error_rounded : Icons.check_circle_rounded,
-                            size: 20,
-                            color: hasIncident ? AppColors.primaryRed : const Color(0xFF16A34A),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            hasIncident
-                                ? AppStrings.incidentInProgress
-                                : AppStrings.secure,
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: hasIncident ? AppColors.primaryRed : const Color(0xFF16A34A),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
                       Text(
-                        _siteName(item.id),
+                        site.name,
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
@@ -364,64 +342,26 @@ class _SiteCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _siteLocation(item.id),
+                        site.description ?? (site.hasLocation ? '${site.latitude!.toStringAsFixed(4)}, ${site.longitude!.toStringAsFixed(4)}' : ''),
                         style: const TextStyle(
                           fontSize: 13,
                           color: Color(0xFF6B7280),
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: item.reinforcementRequired
-                              ? AppColors.primaryRed.withValues(alpha: 0.1)
-                              : const Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.people_outline_rounded,
-                              size: 16,
-                              color: item.reinforcementRequired
-                                  ? AppColors.primaryRed
-                                  : const Color(0xFF6B7280),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              item.reinforcementRequired
-                                  ? AppStrings.agentReinforcement(item.agentCount)
-                                  : AppStrings.agentsCount(item.agentCount),
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: item.reinforcementRequired
-                                    ? AppColors.primaryRed
-                                    : const Color(0xFF6B7280),
-                              ),
-                            ),
-                          ],
+                      const SizedBox(height: 8),
+                      Text(
+                        AppStrings.agentsOnSite,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B7280),
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    color: const Color(0xFFE5E7EB),
-                    child: Icon(
-                      Icons.warehouse_rounded,
-                      size: 36,
-                      color: Colors.grey.shade400,
-                    ),
-                  ),
-                ),
+                const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
               ],
             ),
           ),

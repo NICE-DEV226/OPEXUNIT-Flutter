@@ -1,10 +1,53 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/app_strings.dart';
+import '../../../../core/network/services/patrol_api_service.dart';
 import '../../../../core/theme/app_colors.dart';
 
-class AgentPatrolReportScreen extends StatelessWidget {
-  const AgentPatrolReportScreen({super.key});
+class AgentPatrolReportScreen extends StatefulWidget {
+  const AgentPatrolReportScreen({super.key, this.patrolId});
+
+  final String? patrolId;
+
+  @override
+  State<AgentPatrolReportScreen> createState() => _AgentPatrolReportScreenState();
+}
+
+class _AgentPatrolReportScreenState extends State<AgentPatrolReportScreen> {
+  final _observationController = TextEditingController();
+  String _selectedType = 'Véhicule';
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _observationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitReport(BuildContext context) async {
+    final patrolId = widget.patrolId;
+    final text = _observationController.text.trim();
+    final anomaly = text.isEmpty ? _selectedType : '$_selectedType: $text';
+
+    setState(() => _isSubmitting = true);
+    try {
+      if (patrolId != null && patrolId.isNotEmpty) {
+        await PatrolApiService.reportAnomaly(patrolId: patrolId, anomaly: anomaly);
+      }
+      if (!context.mounted) return;
+      _showSignalSuccessDialog(context);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e is Exception ? e.toString().replaceFirst('Exception: ', '') : 'Erreur'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,16 +94,26 @@ class AgentPatrolReportScreen extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      AppStrings.vehicle,
+                      _selectedType,
                       style: const TextStyle(
                         fontSize: 13,
                         color: Color(0xFF111827),
                       ),
                     ),
                   ),
-                  const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: Color(0xFF6B7280),
+                  PopupMenuButton<String>(
+                    icon: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: Color(0xFF6B7280),
+                    ),
+                    onSelected: (v) => setState(() => _selectedType = v),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(value: 'Véhicule', child: Text('Véhicule')),
+                      const PopupMenuItem(value: 'Incendie', child: Text('Incendie')),
+                      const PopupMenuItem(value: 'Intrusion', child: Text('Intrusion')),
+                      const PopupMenuItem(value: 'Accident', child: Text('Accident')),
+                      const PopupMenuItem(value: 'Autre', child: Text('Autre')),
+                    ],
                   ),
                 ],
               ),
@@ -85,6 +138,7 @@ class AgentPatrolReportScreen extends StatelessWidget {
                 border: Border.all(color: const Color(0xFFCBD5E1)),
               ),
               child: TextField(
+                controller: _observationController,
                 maxLines: null,
                 minLines: 6,
                 decoration: InputDecoration(
@@ -139,7 +193,7 @@ class AgentPatrolReportScreen extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () => _showSignalSuccessDialog(context),
+                onPressed: _isSubmitting ? null : () => _submitReport(context),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryRed,
                   foregroundColor: Colors.white,

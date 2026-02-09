@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -96,5 +97,26 @@ class ApiClient {
           headers: _headers(),
         )
         .timeout(ApiConfig.connectTimeout);
+  }
+
+  /// POST [path] en multipart : fichier [file] sous le champ [fileField], plus [fields] optionnels.
+  /// Utilisé pour POST /api/upload/file (target=profile, etc.).
+  static Future<http.StreamedResponse> postMultipart(
+    String path, {
+    required File file,
+    String fileField = 'file',
+    Map<String, String>? fields,
+  }) async {
+    final uri = _uri(path);
+    final request = http.MultipartRequest('POST', uri);
+    request.headers['Accept'] = 'application/json';
+    if (_token.isNotEmpty) request.headers['Authorization'] = 'Bearer $_token';
+    request.files.add(await http.MultipartFile.fromPath(fileField, file.path));
+    if (fields != null) {
+      for (final e in fields.entries) {
+        request.fields[e.key] = e.value;
+      }
+    }
+    return request.send().timeout(ApiConfig.connectTimeout);
   }
 }
